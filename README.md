@@ -10,11 +10,11 @@ I've had all kinds of trouble with other serial consoles like screen and minicom
 
 * In Ubuntu, Screen and Minicom would just stop accepting keyboard input
   after the target device reboots. I don't know why.
-* Other serial consoles are awkward to use, because I have to use their
-  scrollback. That means useful features like search won't work how I'm
-  used to, and using a system via serial just acts different from using
+* Serial consoles are often awkward to use, because they have their own
+  scrollback. That means useful features like my terminal's search won't work
+  how I'm used to, and using a system via serial just acts different from using
   it via SSH.
-* Other serial consoles are generally hard to use in scripts. Sercom just reads
+* Serial consoles are generally hard to use in scripts. Sercom just reads
   from stdin (and whichever other files you tell it to read), and forwards any
   byte it receives to the serial port.
 

@@ -7,12 +7,18 @@ import os
 import select
 
 parser = argparse.ArgumentParser()
-parser.add_argument("device")
-parser.add_argument("baud", type=int, default=9600, nargs="?")
-parser.add_argument("--read", action="append", default=[])
-parser.add_argument("--write", action="append", default=[])
-parser.add_argument("--stdio", action="store_true", default=True)
-parser.add_argument("--no-stdio", dest="stdio", action="store_false")
+parser.add_argument("device",
+    help="Path to the serial port")
+parser.add_argument("baud", type=int, default=9600, nargs="?",
+    help="Baud rate (default: 9600)")
+parser.add_argument("--read", action="append", default=[], metavar="PATH",
+    help="Read the content of PATH and send it to the serial port")
+parser.add_argument("--write", action="append", default=[], metavar="PATH",
+    help="Write anything received from the serial port to PATH")
+parser.add_argument("--no-stdio", dest="stdio", action="store_false",
+    help="Don't use stdin/stdout")
+parser.add_argument("--stdio", action="store_true", default=True,
+    help="Revert --no--stdio")
 args = parser.parse_args()
 
 cleanups = []
@@ -23,7 +29,7 @@ def main():
     outputs = []
 
     for path in args.read:
-        print(f"> {path}", file=sys.stderr)
+        print(f"< {path}", file=sys.stderr)
         inputs.append(open(path, "rb"))
     for path in args.write:
         print(f"> {path}", file=sys.stderr)
@@ -75,9 +81,13 @@ def main():
             f = inmap[fd]
             chrs = os.read(fd, 1024)
             if len(chrs) == 0:
-                print(f"\rClosed: {f.name}\r", file=sys.stderr)
+                print(f">> Closed: {f.name}\r", file=sys.stderr)
+                inputs.remove(f)
                 poll.unregister(f.fileno())
                 f.close()
+                if len(inputs) == 0:
+                    raise KeyboardInterrupt
+
                 return
 
             if args.stdio and f == sys.stdin.buffer and f.isatty():

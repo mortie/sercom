@@ -40,6 +40,23 @@ any other key exits command mode without sending anything.
 * `--read <file>`: Read everything from `<file>` and send to the serial port.
 * `--write <file>`: Write anything received over the serial port to `<file>`.
 
+## Install
+
+To install Sercom, run:
+
+	git clone github.com/mortie/sercom.git
+	cd sercom
+	sudo cp sercom.py /usr/local/bin/sercom
+
+You may also need to install Python 3 and the pyserial package. On Ubuntu and
+Debian-based distros, that means:
+
+	sudo apt update && sudo apt install python3 python3-serial
+
+To uninstall, just remove the `sercom` file:
+
+	sudo rm /usr/local/bin/sercom
+
 ## Automation
 
 The most obvious way to automate something with Sercom is to just write to its

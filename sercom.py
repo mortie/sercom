@@ -82,6 +82,7 @@ def main():
             hidden = ("do_EOF", "do_q")
             ruler = ""
             doc_header = "Commands (type 'help <command>'):"
+            identchars = cmd.Cmd.identchars + ".-"
 
             def get_names(self):
                 return [n for n in dir(self.__class__) if n not in self.hidden]

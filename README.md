@@ -39,6 +39,7 @@ any other key exits command mode without sending anything.
 * `--stdio`: Revert a previous `--no-stdio`.
 * `--read <file>`: Read everything from `<file>` and send to the serial port.
 * `--write <file>`: Write anything received over the serial port to `<file>`.
+* `--snippet <path>`: Read snippets from `<path>`.
 
 ## Install
 
@@ -59,11 +60,13 @@ To uninstall, just remove the `sercom` file:
 
 ## Automation
 
-The most obvious way to automate something with Sercom is to just write to its
-stdin, and that works well. However, sometimes, you want to use the serial
-device interactively in addition to automating something.
+You can automate something with Sercom by writing to its stdin from a script.
+However, there are also other ways:
 
-What I do in that situation is:
+### --read from a FIFO
+
+With the --read option, sercom will read from a path and write the read bytes
+to the serial port. Combined with Linux's FIFOs, this is really powerful:
 
 1. Create a FIFO with `mkfifo some-filename.fifo`.
 2. Ensure the FIFO stays open with `cat >some-filename.fifo &`.
@@ -74,3 +77,63 @@ What I do in that situation is:
 Now, Sercom will forward anything written to `some-filename.fifo` to the
 serial port. `echo ls > some-filename.fifo` will write `ls<newline>`
 to the serial port.
+
+### Snippets
+
+Sercom also has a concept of snippets. A snippet is a program or file which
+you can call at any time. Here's how:
+
+1. Make a snippets directory: `mkdir sercom-snippets`
+2. Create a test snippet: `echo Hello World > sercom-snippets/test-snippet`
+3. Start Sercom: `sercom <port>`
+4. Run the snippet: hit `Ctrl-a :` to enter the REPL, then write
+   `test-snippet <enter>`. The text "Hello World" is sent to the serial port.
+
+Sercom will default to looking for snippets in `~/.config/sercom/snippets` and
+in `./sercom-snippets` (relative to wherever  you started sercom). Additional
+snippet directories can be added with the `--snippet` option.
+
+---
+
+A snippet can also be a script whose stdout is read into the serial port.
+For example, a snippet to log in to a Linux system could look like this:
+
+```
+#!/bin/sh
+echo myusername
+sleep 0.1
+echo mypassword
+```
+
+Put that in `sercom-snippets/login`, make sure it's executable with
+`chmod +x sercom-snippets/login`, and then running the `login` snippet
+(`<Ctrl-a> :login <enter>`) will enter credentials with a slight delay
+between the username and the password.
+
+---
+
+A snippet can also accept arguments. For example, if you have multiple
+users on a connected Linux system, it might be useful to have a more complicated
+login snippet:
+
+```
+#!/bin/sh
+if [ "$1" = root ]; then
+	echo root
+	sleep 0.1
+	echo cheesecake
+elif [ "$1" = user1 ]; then
+	echo user1
+	sleep 0.1
+	echo password
+elif [ "$1" = user2 ]; then
+	echo user2
+	sleep 0.1
+	echo secret
+else
+	echo "Unknown user: $1" >&2
+fi
+```
+
+Now, `:login root` will enter root's username/password, while `:login user1`
+will enter user1's username/password.

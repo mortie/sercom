@@ -44,7 +44,7 @@ any other key exits command mode without sending anything.
 
 To install Sercom, run:
 
-	git clone github.com/mortie/sercom.git
+	git clone https://github.com/mortie/sercom.git
 	cd sercom
 	sudo cp sercom.py /usr/local/bin/sercom
 

@@ -10,6 +10,7 @@ import subprocess
 import shlex
 import base64
 import zlib
+import time
 
 def default_config_dir():
     xdg_config_home = os.environ.get("XDG_CONFIG_HOME")
@@ -47,15 +48,63 @@ def stty_raw():
 def stty_sane():
     os.system("stty sane")
 
+def human_size(size):
+    if size < 1024:
+        return f"{size:.02f}"
+    elif size < 1024 * 1024:
+        return f"{size / 1024:.02f}k"
+    elif size < 1024 * 1024 * 1024:
+        return f"{size / (1024 * 1024):.02f}M"
+    else:
+        return f"{size / (1024 * 1024 * 1024):.02f}G"
+
+def human_time(secs):
+    secs = int(secs)
+    if secs < 0:
+        return "?"
+    elif secs < 60:
+        return f"{secs}s"
+    elif secs < 60 * 60:
+        return f"{int(secs / 60)}m {secs % 60}s"
+    else:
+        hh = int(secs / (60 * 60))
+        secs = secs % (60 * 60)
+        return f"{hh}h {int(secs / 60)}m {secs % 60}s"
+
 class Progress:
     def __init__(self, curr, max):
         self.curr = curr
         self.max = max
+        self.rate = 0
+        self.acc = 0
+        self.time = time.time()
+        self.start_time = time.time()
+        self.rate_calc_time = 1
 
     def step(self, n):
         self.curr += n
+        self.acc += n
         frac = self.curr / self.max
-        print(f"\r>>> [{frac:.2%}] ", file=sys.stderr, end="")
+        now = time.time()
+        if now - self.time > self.rate_calc_time:
+            self.rate = self.acc / self.rate_calc_time
+            self.time += self.rate_calc_time
+            self.acc = 0
+            if self.rate_calc_time < 10:
+                self.rate_calc_time += 1
+
+        if self.rate == 0:
+            eta_secs = -1
+        else:
+            eta_secs = (self.max - self.curr) / self.rate
+
+        print(
+            "\033[2K\r>>> " +
+            f"[{frac:.2%}] " +
+            f"[{human_size(self.curr)} / {human_size(self.max)}] " +
+            f"[{human_size(self.rate)}/s] " +
+            f"[ETA: {human_time(eta_secs)}] ",
+            file=sys.stderr, end="")
 
     def done(self):
         print("\r\n", file=sys.stderr, end="")
@@ -63,41 +112,25 @@ class Progress:
 class B64Encoder:
     def __init__(self):
         self.buf = b""
-        self.linechar = 0
 
     def __call__(self, data):
         data = self.buf + data
-        l = len(data)
-        while l % 3 != 0: l -= 1
-        self.buf = data[l:]
-        return self.split64(base64.b64encode(data[:l]))
-
-    def split64(self, data):
-        """
-        Make sure we output the data in lines which are 64 characters long.
-        We do this because some base64 decoders (like openssl) can't deal with
-        long lines.
-        """
-        if self.linechar + len(data) < 64:
-            self.linechar += len(data)
-            return data
-
-        d = data[:64 - self.linechar]
-        first = len(d)
-        last = len(data)
-        d += b"\n"
-        self.linechar = 0
-        while last - first >= 64:
-            d += data[first:first+64]
-            d += b"\n"
-            first += 64
-        if first != last:
-            d += data[first:last]
-            self.linechar = last - first
-        return d
+        end = len(data)
+        while end % 48 != 0: end -= 1
+        output = b""
+        start = 0
+        while end - start >= 48:
+            output += base64.b64encode(data[start:start+48])
+            output += b"\n"
+            start += 48
+        self.buf = data[start:]
+        return output
 
     def eof(self):
-        return self.split64(base64.b64encode(self.buf))
+        if len(self.buf) > 0:
+            return base64.b64encode(self.buf) + b"\n"
+        else:
+            return b""
 
 class GZB64Encoder:
     def __init__(self):
@@ -108,43 +141,9 @@ class GZB64Encoder:
         return self.b64enc(self.compress.compress(data))
 
     def eof(self):
-        return self.b64enc(self.compress.flush()) + self.b64enc.eof()
-
-class FileTransfer:
-    def __init__(self, dest, encoder, cmd):
-        self.encoder = encoder
-        self.started = False
-        self.dest = dest
-        self.cmd = cmd
-
-    def __call__(self, data):
-        if self.started:
-            return self.encoder(data)
-        else:
-            self.started = True
-            return self.cmd + self.encoder(data)
-
-    def eof(self):
-        data = b""
-        if not self.started:
-            data += cmd
-        data += self.encoder.eof()
-        data += b"\n\x04"
-        return data
-
-    def b64(dest):
-        return FileTransfer(
-            dest, B64Encoder(),
-            b"stty -echo && " +
-            b"openssl enc -base64 -d > " + shlex.quote(dest).encode("utf-8") + b" && " +
-            b"stty echo\n")
-
-    def gzb64(dest):
-        return FileTransfer(
-            dest, GZB64Encoder(),
-            b"stty -echo && " +
-            b"openssl enc -base64 -d -A | gunzip > " + shlex.quote(dest).encode("utf-8") + " && " +
-            b"stty echo\n")
+        d = self.b64enc(self.compress.flush())
+        d += self.b64enc.eof()
+        return d
 
 cleanups = []
 def main():
@@ -178,13 +177,52 @@ def main():
         poll.register(inp.fileno(), select.POLLIN | select.POLLPRI)
         inmap[inp.fileno()] = (inp, None)
 
-    def do_filetransfer(f, transformer):
-        curr = f.fileno()
+    def transfer_file_to_serial(f, dest, transformer, recvcmd):
+        curr = f.tell()
         f.seek(0, 2)
         max = f.tell()
         f.seek(curr)
         prog = Progress(curr, max)
         interrupted = False
+
+        def read_until_str(s):
+            start = time.time()
+            d = b""
+            while time.time() < start + 2:
+                d += os.read(ser.fileno(), 100)
+                if s in d:
+                    return
+            sys.stderr.buffer.write(b"Expected the other end to write: '" + s + b"', but it didn't!\n")
+            has_line = False
+            parts = d.split(b'\n')
+            for part in parts:
+                if part.strip() == b"": continue
+                if not has_line:
+                    sys.stderr.buffer.write(b"Instead, it wrote:\n")
+                    has_line = True
+                sys.stderr.buffer.write(b"  " + part + b"\n")
+            raise Exception("File transfer failed.")
+
+        # Make sure we're actually looking at a terminal.
+        # Doing it this way ensures that A) the target has some vaguely posix-shell-like shell,
+        # and B) since we haven't disabled echo yet, we'll read back what we wrote.
+        ser.write(b"echo '===SERCOM''::''FILETRANSFER==='\n")
+        read_until_str(b"===SERCOM::FILETRANSFER===")
+
+        full_recvcmd = recvcmd + b" > " + shlex.quote(dest).encode("utf-8")
+
+        # Verify that we can touch the destination file
+        ser.write(b"touch " + shlex.quote(dest).encode("utf-8") + b" && echo '===SERCOM''::''COMMAND_OK==='\n")
+        read_until_str(b"===SERCOM::COMMAND_OK===")
+
+        # Make the receiving end not write back the stuff we send, since that's a lot of data
+        ser.write(b"stty -echo && echo '===SERCOM''::''STTY_OK==='\n")
+        read_until_str(b"===SERCOM::STTY_OK===")
+
+        # Prepare the other end for receiving data
+        ser.write(full_recvcmd + b'\n')
+        time.sleep(0.1)
+
         while True:
             try:
                 chrs = f.read(1024)
@@ -196,6 +234,10 @@ def main():
                 break
         ser.write(transformer.eof())
         prog.done()
+        ser.write(b"\n\x04")
+        ser.write(b"stty echo && echo '===SERCOM''::''STTY_OK==='\n")
+        read_until_str(b"===SERCOM::STTY_OK===")
+
         if interrupted:
             raise Exception("Interrupted.")
 
@@ -269,10 +311,10 @@ def main():
                     else:
                         src, dest = parts
                     f = open(os.path.expanduser(src), "rb")
-                    do_filetransfer(f, FileTransfer.b64(dest))
-                    return True
+                    transfer_file_to_serial(f, dest, B64Encoder(), b"openssl enc -base64 -d")
                 except Exception as ex:
                     print(ex, file=sys.stderr)
+                return True
 
             def do_filetransfer_gz(self, line):
                 """
@@ -287,10 +329,10 @@ def main():
                     else:
                         src, dest = parts
                     f = open(os.path.expanduser(src), "rb")
-                    do_filetransfer(f, FileTransfer.gzb64(dest))
-                    return True
+                    transfer_file_to_serial(f, dest, GZB64Encoder(), b"openssl enc -base64 -d | gunzip")
                 except Exception as ex:
                     print(ex, file=sys.stderr)
+                return True
 
             def do_ls(self, line):
                 """

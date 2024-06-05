@@ -116,7 +116,8 @@ class B64Encoder:
     def __call__(self, data):
         data = self.buf + data
         end = len(data)
-        while end % 48 != 0: end -= 1
+        while end % 48 != 0:
+            end -= 1
         output = b""
         start = 0
         while end - start >= 48:
@@ -124,7 +125,10 @@ class B64Encoder:
             output += b"\n"
             start += 48
         self.buf = data[start:]
-        return output
+
+        # Because of this:
+        # https://github.com/rockchip-linux/kernel/blob/9ed2be4b9c001ca8006cb4c72928c09927c44f89/drivers/soc/rockchip/rk_fiq_debugger.c#L170
+        return output.replace(b"fiq", b"fi\nq")
 
     def eof(self):
         if len(self.buf) > 0:

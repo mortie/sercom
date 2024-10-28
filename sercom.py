@@ -403,6 +403,7 @@ def main():
         elif cmd_mode:
             cmd_mode = False
             if ch == ord('q'):
+                print("\nExiting...\r", file=sys.stderr)
                 raise KeyboardInterrupt
             elif ch == 0x01:
                 ser.write(bytes([ch]))
